@@ -23,20 +23,14 @@ class MoCo(nn.Module):
 
         # create the encoders
         self.encoder_q = BertForSequenceClassification.from_pretrained(
-            './pretrained/',  # Use the 12-layer BERT model, with an uncased vocab.
-            num_labels=dim,  # The number of output labels--2 for binary classification.
-            # You can increase this for multi-class tasks.
-            output_attentions=False,  # Whether the model returns attentions weights.
-            output_hidden_states=False,  # Whether the model returns all hidden-states.
-        )
+            pretrained_model_name_or_path = 'bert-large-uncased',
+            cache_dir='/home/fanghongchao/.pytorch_pretrained_bert/distributed_-1',
+            num_labels=2
+	)  
         self.encoder_k = BertForSequenceClassification.from_pretrained(
-            './pretrained/',  # Use the 12-layer BERT model, with an uncased vocab.
-            num_labels=dim,  # The number of output labels--2 for binary classification.
-            # You can increase this for multi-class tasks.
-            output_attentions=False,  # Whether the model returns attentions weights.
-            output_hidden_states=False,  # Whether the model returns all hidden-states.
-        )
-
+            pretrained_model_name_or_path='bert-large-uncased',
+            cache_dir='/home/fanghongchao/.pytorch_pretrained_bert/distributed_-1',
+            num_labels=2)  
         fc_features = self.encoder_q.classifier.in_features
         self.encoder_q.classifier = nn.Linear(fc_features, dim)
         self.encoder_k.classifier = nn.Linear(fc_features, dim)
@@ -145,13 +139,13 @@ class MoCo(nn.Module):
             self._momentum_update_key_encoder()  # update the key encoder
 
             # shuffle for making use of BN
-            #sen_k, idx_unshuffle = self._batch_shuffle_ddp(sen_k)
+            sen_k, idx_unshuffle = self._batch_shuffle_ddp(sen_k)
 
             k = self.encoder_k(sen_k, mask_k)  # keys: NxC
             k = nn.functional.normalize(k[0], dim=1)
 
             # undo shuffle
-            #k = self._batch_unshuffle_ddp(k, idx_unshuffle)
+            k = self._batch_unshuffle_ddp(k, idx_unshuffle)
 
 
         l_pos = torch.einsum('nc,nc->n', [q, k]).unsqueeze(-1)
@@ -166,7 +160,7 @@ class MoCo(nn.Module):
 
         # labels: positive key indicators
         labels = torch.zeros(logits.shape[0], dtype=torch.long).cuda()
-
+	self._dequeue_and_enqueue(k)
         return logits, labels
 
 # utils
