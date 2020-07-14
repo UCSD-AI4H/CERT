@@ -1,3 +1,5 @@
+#!/usr/bin/env python
+# Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
 from transformers import BertTokenizer
 import argparse
 import builtins
@@ -21,6 +23,7 @@ import torchvision.models as models
 import moco.loader
 import moco.builder
 import csv
+import pandas as pd
 
 from PIL import Image
 from torch.utils.data import Dataset
@@ -29,16 +32,16 @@ from torch.utils.data import Dataset
 #     if name.islower() and not name.startswith("__")
 #     and callable(models.__dict__[name]))
 
-parser = argparse.ArgumentParser()
+parser = argparse.ArgumentParser(description='PyTorch ImageNet Training')
 parser.add_argument('--data',  default='./augment.csv', type=str,
                     help='path to dataset')
 parser.add_argument('-j', '--workers', default=32, type=int, metavar='N',
                     help='number of data loading workers (default: 32)')
-parser.add_argument('--epochs', default=100, type=int, metavar='N',
+parser.add_argument('--epochs', default=50, type=int, metavar='N',
                     help='number of total epochs to run')
 parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
                     help='manual epoch number (useful on restarts)')
-parser.add_argument('-b', '--batch_size', default=16, type=int,
+parser.add_argument('-b', '--batch_size', default=32, type=int,
                     metavar='N',
                     help='mini-batch size (default: 256), this is the total '
                          'batch size of all GPUs on the current node when '
@@ -56,7 +59,7 @@ parser.add_argument('-p', '--print-freq', default=10, type=int,
                     metavar='N', help='print frequency (default: 10)')
 parser.add_argument('--resume', default='', type=str, metavar='PATH',
                     help='path to latest checkpoint (default: none)')
-parser.add_argument('--world_size', default=1, type=int,
+parser.add_argument('--world-size', default=1, type=int,
                     help='number of nodes for distributed training')
 parser.add_argument('--rank', default=0, type=int,
                     help='node rank for distributed training')
@@ -68,19 +71,20 @@ parser.add_argument('--seed', default=None, type=int,
                     help='seed for initializing training. ')
 parser.add_argument('--gpu', default=0, type=int,
                     help='GPU id to use.')
-parser.add_argument('--multiprocessing_distributed', default=True,
+parser.add_argument('--multiprocessing-distributed', action='store_true',
                     help='Use multi-processing distributed training to launch '
                          'N processes per node, which has N GPUs. This is the '
                          'fastest way to use PyTorch for either single node or '
                          'multi node data parallel training')
 
 parser.add_argument('--save-epoch',default=40,type=int)
+parser.add_argument('--save-path',default='LUNA_resnet50_128_imagenet',type=str)
 
 # moco specific configs:
 parser.add_argument('--moco-dim', default=128, type=int,
                     help='feature dimension (default: 128)')
-parser.add_argument('--moco-k', default=96606, type=int,
-                    help='queue size; number of negative keys (default: 96606)')
+parser.add_argument('--moco-k', default=6720, type=int,
+                    help='queue size; number of negative keys (default: 65536)')
 parser.add_argument('--moco-m', default=0.999, type=float,
                     help='moco momentum of updating key encoder (default: 0.999)')
 parser.add_argument('--moco-t', default=0.07, type=float,
@@ -232,7 +236,6 @@ def main_worker(gpu, ngpus_per_node, args):
             input_ids.append(input_id.reshape([1, -1, 64]))
             attention_masks.append(mask.reshape([1, -1, 64]))
             sentence_sum += 1
-            print(sentence_sum)
 
     input_ids = torch.cat(input_ids, dim=0)
     attention_masks = torch.cat(attention_masks, dim=0)
@@ -249,24 +252,27 @@ def main_worker(gpu, ngpus_per_node, args):
         sampler=torch.utils.data.RandomSampler(train_dataset),  # Select batches randomly
         batch_size=args.batch_size  # Trains with this batch size.
     )
+    losslist=[]
 
-    for epoch in range(args.start_epoch, args.epochs):
+    for epoch in range(args.start_epoch+1, args.epochs+1):
         if args.distributed:
             train_sampler.set_epoch(epoch)
         adjust_learning_rate(optimizer, epoch, args)
 
         # train for one epoch
-        train(train_loader, model, criterion, optimizer, epoch, args)
+        train(train_loader, model, criterion, optimizer, epoch, args, losslist)
 
-        if epoch % 5 == 0:
+        if epoch % 10 == 0:
             save_checkpoint({
                 'epoch': epoch + 1,
                 'arch': args.arch,
                 'state_dict': model.state_dict(),
                 'optimizer' : optimizer.state_dict(),
-            }, is_best=False, filename='moco_model/moco.tar'.format(epoch))
+            }, is_best=False, filename='moco_model/moco1.tar')
+    save_file = pd.DataFrame(data=losslist)
+    save_file.to_csv('ch.csv', index=False, encoding="utf-8", header=None)    
 
-def train(train_loader, model, criterion, optimizer, epoch, args):
+def train(train_loader, model, criterion, optimizer, epoch, args, losslist):
     batch_time = AverageMeter('Time', ':6.3f')
     data_time = AverageMeter('Data', ':6.3f')
     losses = AverageMeter('Loss', ':.4e')
@@ -292,6 +298,7 @@ def train(train_loader, model, criterion, optimizer, epoch, args):
         sen2 = sen2.contiguous()  
         mask1 = mask1.contiguous()  
         mask2 = mask2.contiguous()  
+        print(args.gpu)
         if args.gpu is not None:
             sen1 = sen1.cuda(args.gpu, non_blocking=True)
             sen2 = sen2.cuda(args.gpu, non_blocking=True)
@@ -300,7 +307,9 @@ def train(train_loader, model, criterion, optimizer, epoch, args):
 
         # compute output
         output, target = model(sen_q=sen1, sen_k=sen2, mask_q=mask1, mask_k=mask2)
+        print(target.shape)
         loss = criterion(output, target)
+        losslist.append(loss.item())
 
         # acc1/acc5 are (K+1)-way contrast classifier accuracy
         # measure accuracy and record loss
