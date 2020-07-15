@@ -20,7 +20,7 @@ Before training, you need to build the moco_model with *mkdir moco_model*
 #### Train
 You need to change the number of negtive samples (number of augmented data) in MOCO.py *line 84* , you can also change the epoch: *line 41*, batch size:*line 45*, learning rate:*line 50*, and temperature: *line 90*
 
-You can train on the MOCO task with:
+You can train the MOCO task with:
 
 *CUDA_VISIBLE_DEVICES=0 python MOCO.py*
 
